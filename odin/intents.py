@@ -20,6 +20,14 @@ from typing import Any
 
 UNK = "[unk]"
 
+# How much ODIN says about an intent.
+#   ALWAYS - the reply *is* the answer (a question, or a warning). Always spoken.
+#   CHATTY - a courtesy confirmation. Spoken only when verbosity is "chatty".
+#   NEVER  - a beep is enough.
+ALWAYS = "always"
+CHATTY = "chatty"
+NEVER = "never"
+
 # Spoken number -> value, for "set volume to sixty percent".
 NUMBERS: dict[str, int] = {
     "zero": 0,
@@ -44,6 +52,7 @@ class Intent:
     handler: str  # "module.function" inside odin.actions
     phrases: tuple[str, ...]
     reply: str | None = None  # spoken on success; None = beep only
+    voice: str = CHATTY  # one of ALWAYS / CHATTY / NEVER
     confirm: bool = False  # require a spoken "yes" first
     slots: dict[str, Any] = field(default_factory=dict)
 
@@ -63,15 +72,23 @@ class Match:
 _BASE: tuple[Intent, ...] = (
     # ---- media ----------------------------------------------------------
     Intent("media.play", "media.play",
-           ("play", "resume", "play music", "continue playing")),
+           ("play", "resume", "play music", "continue playing"),
+           reply="Playing."),
     Intent("media.pause", "media.pause",
-           ("pause", "pause music", "pause the music")),
+           ("pause", "pause music", "pause the music"),
+           reply="Paused."),
     Intent("media.next", "media.next_track",
-           ("next", "next track", "next song", "skip", "skip track")),
+           ("next", "next track", "next song", "skip", "skip track"),
+           reply="Next."),
     Intent("media.previous", "media.previous_track",
-           ("previous", "previous track", "previous song", "go back")),
+           ("previous", "previous track", "previous song", "go back"),
+           reply="Going back."),
     Intent("media.stop", "media.stop",
-           ("stop", "stop playing", "stop the music")),
+           ("stop", "stop playing", "stop the music"),
+           reply="Stopped."),
+    Intent("media.now_playing", "media.now_playing",
+           ("what is playing", "whats playing", "what song is this"),
+           voice=ALWAYS),
 
     # ---- volume ---------------------------------------------------------
     Intent("volume.up", "volume.up",
@@ -81,9 +98,13 @@ _BASE: tuple[Intent, ...] = (
            ("volume down", "quieter", "turn it down", "turn down the volume",
             "decrease volume", "decrease the volume")),
     Intent("volume.mute", "volume.mute",
-           ("mute", "silence", "mute the sound")),
+           ("mute", "silence", "mute the sound"), reply="Muted."),
     Intent("volume.unmute", "volume.unmute",
-           ("sound on", "volume on", "turn the sound on")),
+           ("sound on", "volume on", "turn the sound on"),
+           reply="Sound on."),
+    Intent("volume.status", "volume.status",
+           ("am i muted", "is it muted", "what is the volume"),
+           voice=ALWAYS),
     Intent("volume.max", "volume.maximum",
            ("max volume", "full volume", "maximum volume")),
     Intent("volume.half", "volume.set_level",
@@ -92,10 +113,10 @@ _BASE: tuple[Intent, ...] = (
     # ---- system ---------------------------------------------------------
     Intent("system.lock", "system.lock",
            ("lock screen", "lock the screen", "lock my screen"),
-           reply="Locking."),
+           reply="Locking.", voice=ALWAYS),
     Intent("system.suspend", "system.suspend",
            ("suspend", "suspend the computer", "put the computer to sleep"),
-           reply="Going to sleep."),
+           reply="Going to sleep.", voice=ALWAYS),
     Intent("system.screenshot", "system.screenshot",
            ("screenshot", "take a screenshot", "capture the screen")),
     Intent("system.brightness_up", "system.brightness_up",
@@ -105,29 +126,41 @@ _BASE: tuple[Intent, ...] = (
            ("brightness down", "dimmer", "decrease brightness",
             "turn down the brightness")),
     Intent("system.time", "system.time",
-           ("what time is it", "what is the time", "tell me the time")),
+           ("what time is it", "what is the time", "tell me the time"),
+           voice=ALWAYS),
     Intent("system.date", "system.date",
-           ("what is the date", "what day is it", "what is today")),
+           ("what is the date", "what day is it", "what is today"),
+           voice=ALWAYS),
+    Intent("system.battery", "system.battery",
+           ("battery level", "what is the battery", "how is the battery"),
+           voice=ALWAYS),
     Intent("system.shutdown", "system.shutdown",
            ("shut down", "shut down the computer", "power off"),
-           reply="Shutting down.", confirm=True),
+           reply="Shutting down.", voice=ALWAYS, confirm=True),
     Intent("system.restart", "system.restart",
            ("restart the computer", "reboot", "reboot the computer"),
-           reply="Restarting.", confirm=True),
+           reply="Restarting.", voice=ALWAYS, confirm=True),
 
     # ---- meta -----------------------------------------------------------
     Intent("meta.cancel", "meta.cancel",
            ("cancel", "never mind", "forget it", "nothing")),
     Intent("meta.standby", "meta.standby",
            ("stop listening", "go to standby"),
-           reply="Standing by."),
+           reply="Standing by.", voice=ALWAYS),
     # The only command honoured while in standby, so standby is always
     # recoverable by voice alone.
     Intent("meta.resume", "meta.resume",
            ("start listening", "wake up"),
-           reply="Listening."),
+           reply="Listening.", voice=ALWAYS),
     Intent("meta.status", "meta.status",
-           ("are you there", "are you awake", "status")),
+           ("are you there", "are you awake", "status"), voice=ALWAYS),
+    Intent("meta.undo", "meta.undo",
+           ("undo that", "undo", "put that back"), voice=ALWAYS),
+    Intent("meta.repeat", "meta.repeat",
+           ("say that again", "repeat that", "what did you say"),
+           voice=ALWAYS),
+    Intent("meta.capabilities", "meta.capabilities",
+           ("what can you do", "what do you know", "help"), voice=ALWAYS),
 )
 
 
@@ -139,6 +172,8 @@ class IntentTable:
         self._intents: list[Intent] = list(_BASE)
         self._intents.extend(self._volume_set_intents())
         self._intents.extend(self._app_intents(cfg["apps"]))
+        self._intents.extend(
+            self._place_intents(cfg.get("folders", {}), cfg.get("web", {})))
         self._by_phrase: dict[str, tuple[Intent, dict[str, Any]]] = {}
         for intent in self._intents:
             for phrase in intent.phrases:
@@ -163,6 +198,29 @@ class IntentTable:
                     slots={"percent": value},
                 )
             )
+        return out
+
+    @staticmethod
+    def _place_intents(folders: dict[str, str], web: dict[str, str]):
+        """Folders and URLs are *opened*, never "launched" - one verb each
+        keeps the grammar lean, which keeps recognition sharp."""
+        out = []
+        for alias, path in folders.items():
+            spoken = alias.lower().strip()
+            out.append(Intent(
+                f"places.folder.{spoken.replace(' ', '_')}",
+                "places.open_folder",
+                (f"open {spoken}",),
+                slots={"path": path, "label": spoken},
+            ))
+        for alias, url in web.items():
+            spoken = alias.lower().strip()
+            out.append(Intent(
+                f"places.web.{spoken.replace(' ', '_')}",
+                "places.open_url",
+                (f"open {spoken}", f"launch {spoken}"),
+                slots={"url": url, "label": spoken},
+            ))
         return out
 
     @staticmethod

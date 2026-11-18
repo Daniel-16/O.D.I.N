@@ -51,6 +51,7 @@ class Speaker:
         self._voice = None
         self._lock = threading.Lock()
         self._gain = float(self._cfg.get("volume", 0.5))
+        self.last_said: str | None = None  # for "say that again"
         self._cache: dict[str, np.ndarray] = {}
         if self._cfg.get("enabled", True) and self._cfg.get("preload", True):
             self.warm()
@@ -106,6 +107,7 @@ class Speaker:
     def say(self, text: str) -> None:
         if not text or not self._cfg.get("enabled", True):
             return
+        self.last_said = text
         self.warm()
         if self._voice is None:
             self.beep(OK)

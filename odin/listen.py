@@ -95,11 +95,32 @@ class CommandListener:
             rec.Reset()
         return rec
 
-    def listen(self, mic: Microphone, grammar: str) -> ListenResult:
+    def listen(
+        self,
+        mic: Microphone,
+        grammar: str,
+        no_speech_timeout: float | None = None,
+        threshold_scale: float = 1.0,
+    ) -> ListenResult:
+        """Capture one command.
+
+        `no_speech_timeout` overrides how long to wait for speech to start.
+        Follow-up turns pass a shorter value: after acting, ODIN keeps
+        listening briefly so commands can be chained, but it should not sit
+        waiting as long as it does right after the wake word.
+
+        `threshold_scale` raises the bar for what counts as speech. A
+        follow-up window is open without anyone having addressed ODIN, so room
+        noise gets a chance to be decoded; observed live, it produced "louder"
+        and changed the volume. Unprompted turns therefore demand a louder,
+        clearly-directed voice.
+        """
         rec = self._recogniser(grammar)
-        threshold = float(self._cfg["energy_threshold"])
+        threshold = float(self._cfg["energy_threshold"]) * float(threshold_scale)
         silence_end = float(self._cfg["silence_end_s"])
-        no_speech_timeout = float(self._cfg["no_speech_timeout_s"])
+        if no_speech_timeout is None:
+            no_speech_timeout = float(self._cfg["no_speech_timeout_s"])
+        no_speech_timeout = float(no_speech_timeout)
         max_s = float(self._cfg["max_s"])
 
         started = time.monotonic()

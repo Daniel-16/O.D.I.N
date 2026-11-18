@@ -24,9 +24,15 @@ _DEFAULTS: dict[str, Any] = {
         "no_speech_timeout_s": 3.0,
         "energy_threshold": 300,
         "alternatives": 5,
+        "follow_up_s": 4.0,
+        "follow_up_threshold_scale": 2.0,
+        "max_turns": 5,
+        "clarify": True,
+        "clarify_cutoff": 0.62,
     },
     "speech": {
         "enabled": True,
+        "verbosity": "chatty",
         "voice": "models/en_US-ryan-medium.onnx",
         "preload": True,
         "beeps": True,
@@ -37,6 +43,8 @@ _DEFAULTS: dict[str, Any] = {
     "brightness": {"step": 10},
     "system": {"screenshot_dir": "~/Pictures", "confirm_destructive": True},
     "apps": {},
+    "folders": {},
+    "web": {},
     "log": {"level": "info", "transcripts": True},
 }
 
@@ -65,6 +73,12 @@ class Config:
 
     def __getitem__(self, section: str) -> dict[str, Any]:
         return self._data[section]
+
+    def get(self, section: str, default: Any = None) -> Any:
+        return self._data.get(section, default)
+
+    def __contains__(self, section: str) -> bool:
+        return section in self._data
 
     @property
     def model_dir(self) -> Path:

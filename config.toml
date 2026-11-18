@@ -23,9 +23,19 @@ silence_end_s = 0.8      # end the command after this much trailing silence
 no_speech_timeout_s = 3.0  # give up if nothing is said after the beep
 energy_threshold = 300   # RMS (int16) above which a block counts as speech
 alternatives = 5         # N-best hypotheses to consider (see odin/listen.py)
+follow_up_s = 4.0        # keep listening this long after acting (0 disables)
+# Nobody has addressed ODIN during a follow-up window, so room noise gets a
+# chance to be decoded. Speech must be this many times louder to count there.
+follow_up_threshold_scale = 2.0
+max_turns = 5            # most commands accepted from one wake word
+clarify = true           # ask "did you mean ...?" on a near miss
+clarify_cutoff = 0.62    # similarity needed to offer a suggestion (0..1)
 
 [speech]
 enabled = true
+# "chatty" speaks a short confirmation for ordinary actions; "brief" beeps for
+# those and saves the voice for questions, errors and clarifications.
+verbosity = "chatty"
 voice = "models/en_US-ryan-medium.onnx"
 preload = true           # load Piper at startup so the first reply is not slow
 beeps = true
@@ -86,6 +96,34 @@ confirm_destructive = true  # shut down / restart require a spoken "yes"
 "extension manager" = "com.mattjakeman.ExtensionManager"
 "postman" = "postman_postman"
 "obs" = "com.obsproject.Studio"
+# Chrome web apps installed on this machine. "whatsapp" is not in the speech
+# model's lexicon, but "whats app" is - the spoken alias only has to map to an
+# intent, it does not have to match the brand's spelling.
+"whats app web" = "chrome-hnpfjngllnobngcgfapefoaidbinmjnm-Default"
+"whats app" = "chrome-hnpfjngllnobngcgfapefoaidbinmjnm-Default"
+"youtube music" = "chrome-cinhimbnkkaeohfgghhklpknlkffjgod-Default"
+"apple music" = "chrome-blgdilankhbcpipclgpdndahbehalgkh-Default"
+"click up" = "chrome-edcmabgkbicempmpgmniellhbjopafjh-Default"
+
+# Spoken alias -> folder. Opened in the file manager.
+[folders]
+"videos" = "~/Videos"
+"series" = "~/Videos/Series"
+"movies" = "~/Videos/Movies"
+"downloads" = "~/Downloads"
+"documents" = "~/Documents"
+"pictures" = "~/Pictures"
+"screenshots" = "~/Pictures"
+"music folder" = "~/Music"
+"home folder" = "~"
+"trash" = "trash:///"
+
+# Spoken alias -> URL. Opened in the default browser.
+[web]
+"youtube" = "https://www.youtube.com"
+"gmail" = "https://mail.google.com"
+"maps" = "https://maps.google.com"
+"github" = "https://github.com"
 
 [log]
 level = "info"       # debug | info | warning | error

@@ -51,14 +51,41 @@ systemctl --user stop odin
 |---|---|
 | Media | play · pause · next track · previous track · stop · play music · pause music |
 | Volume | volume up · volume down · louder · quieter · mute · sound on · max volume · set volume to sixty percent · half volume |
-| Apps | open firefox / chrome / spotify / telegram / terminal / files / settings / calculator / code / media player / … (also "launch …" or "start …") |
-| System | lock the screen · suspend · take a screenshot · brightness up · brightness down · what time is it · what day is it |
+| Apps | open firefox / chrome / spotify / telegram / terminal / files / settings / calculator / code / media player / whats app web / youtube music / … (also "launch …" or "start …") |
+| Folders | open series · open movies · open videos · open downloads · open documents · open pictures · open screenshots · open music folder · open home folder · open trash |
+| Web | open youtube · open gmail · open maps · open github |
+| System | lock the screen · suspend · take a screenshot · brightness up · brightness down · what time is it · what day is it · battery level |
+| Questions | whats playing · am i muted · what is the volume · what can you do · say that again |
+| Correcting | undo that · never mind |
 | Power | shut down · reboot  *(both ask "Are you sure?" and need a spoken "yes")* |
-| ODIN | stop listening · start listening · are you there · never mind |
+| ODIN | stop listening · start listening · are you there |
 
 `./odin.sh phrases` prints the authoritative list. To add an app, add a line to
 `[apps]` in `config.toml` and run `./odin.sh check` — it will tell you if the
 words you chose can be recognised.
+
+## How it talks back
+
+**One wake word, several commands.** After acting, ODIN keeps listening for
+`listen.follow_up_s` seconds, so you can say *"hey odin"* → *"pause"* →
+*"volume up"* without waking it again. One caveat: **you cannot talk over its
+reply.** The microphone is muted while ODIN speaks, so that it never
+transcribes its own voice — wait for it to finish before the next command.
+
+**It asks when it nearly understood.** Say *"lock"* and it answers *"Did you
+mean lock screen?"*; say something between two commands and it offers both:
+*"Did you mean brightness up, or brightness down?"* A spoken "yes" accepts a
+single suggestion, or name the one you want. When too many commands would fit —
+a bare *"open"* matches dozens — it says it did not catch that rather than
+guessing, and it never suggests anything destructive.
+
+**Two levels of chat.** `speech.verbosity = "chatty"` confirms ordinary actions
+out loud (*"Paused."*, *"Volume 70 percent."*). `"brief"` beeps for those
+instead and saves the voice for answers, errors and clarifications — questions
+like *"battery level"* are always spoken, because the reply *is* the answer.
+
+**It can take one step back.** *"undo that"* reverses the last volume or
+brightness change. *"say that again"* repeats its last reply.
 
 ## How it works
 
@@ -117,6 +144,12 @@ Everything lives in `config.toml`. The settings worth touching:
 | `listen.silence_end_s` | how much trailing silence ends a command |
 | `listen.alternatives` | how many hypotheses to consider |
 | `wake.settle_ms` | audio dropped after waking, to skip the wake-word tail |
+| `speech.verbosity` | `chatty` confirms actions aloud, `brief` beeps instead |
+| `listen.follow_up_s` | how long to keep listening after acting (0 disables chaining) |
+| `listen.follow_up_threshold_scale` | how much louder speech must be in an unprompted follow-up window |
+| `listen.max_turns` | most commands accepted from one wake word |
+| `listen.clarify` / `clarify_cutoff` | whether to offer "did you mean …", and how close a match must be |
+| `folders` / `web` | spoken alias → folder path or URL |
 | `speech.volume` | how loud ODIN is |
 | `volume.step`, `brightness.step` | how big one "up" is |
 | `apps` | spoken alias → `.desktop` id |
@@ -152,7 +185,12 @@ matching and the intent table all agree.
 `airtest.py` goes further: it plays the wake word and a command out of the
 speakers and reports what the running daemon actually did, so it covers the
 speaker, the room, the microphone and the timing between them. It refuses to
-trigger anything destructive. That test is what caught the one timing bug
+trigger anything destructive. It is also what caught two bugs in the
+conversation features: with a follow-up window open, the wake word itself
+reached the *command* recogniser, came back as "louder" and changed the volume
+(the wake phrases are now part of the command grammar and any hypothesis
+containing one is treated as a re-wake), and room noise in that same window
+could trigger a command (hence the loudness scaling). That test is what caught the one timing bug
 found in development: the wake word is detected on a *partial* result, part-way
 through "hey odin", so the tail of the wake word was still arriving and landed
 in the command recogniser — which then ended the command window before the
@@ -177,7 +215,14 @@ Neither test says anything about how well ODIN hears *you* — that is what
   that for your music.
 * **Brightness needs the udev rule** from `scripts/setup-system.sh`. Without
   it, ODIN says so instead of failing silently.
-* **One command per wake.** Say the wake word again for the next one.
+* **You cannot speak over ODIN's reply.** Its microphone is muted while it
+  talks, so a command said during a spoken reply is lost. Set
+  `speech.verbosity = "brief"` if you want shorter gaps between commands.
+* **A follow-up window asks for a clearer voice.** Nobody has addressed ODIN
+  during one, so room noise gets a chance to be decoded — live testing had
+  noise come back as "louder" and change the volume. Speech must now be about
+  twice as loud to count there, which means a chained command needs to be
+  spoken deliberately, not muttered.
 * **Internet is needed once**, by `scripts/setup.sh`, for the Python packages
   and the two model files. Nothing after that touches the network.
 
@@ -222,3 +267,35 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, and pull 
 ## License
 
 ODIN is licensed under the [MIT License](LICENSE).
+
+## Adding your own commands
+
+Apps, folders and web pages are config, not code. Add a line to `[apps]`,
+`[folders]` or `[web]` in `config.toml`, run `./odin.sh check`, and restart.
+Anything else — a new kind of command — goes in `odin/intents.py`.
+
+There is one rule that catches everyone out: **ODIN can only hear words that
+are already in the speech model's lexicon.** A word that is not in it is
+silently dropped from the grammar, so the phrase containing it can never be
+recognised. `./odin.sh check` validates every phrase against the lexicon and
+names any word that is missing, which is why it is worth running after every
+edit.
+
+You cannot add words to the model. Vosk's own documentation is explicit about
+it: runtime grammars and language-model rebuilds both select from the existing
+vocabulary, and introducing a new word means recompiling the graph from a
+pronunciation dictionary — which Vosk only supports for some of its large
+models, not the small one used here.
+
+What you do instead is spell the word with words the model *does* know. The
+spoken alias never has to match the real spelling — it only has to map to an
+intent. "whatsapp" is not in the lexicon, but "whats" and "app" both are, so
+`"whats app web"` works and opens the WhatsApp Web app.
+
+To see the whole vocabulary:
+
+```bash
+sudo apt install libfst-tools
+fstsymbols --save_osymbols=words.txt \
+    models/vosk-model-small-en-us-0.15/graph/Gr.fst
+```

@@ -17,7 +17,7 @@ from typing import Any, Callable
 
 log = logging.getLogger("odin.actions")
 
-_MODULES = ("media", "volume", "apps", "system", "meta")
+_MODULES = ("media", "volume", "apps", "places", "system", "meta")
 
 
 class ActionError(RuntimeError):
@@ -29,6 +29,8 @@ class Context:
     cfg: Any
     speaker: Any = None
     standby: bool = False
+    # State captured before a reversible action, for "undo that".
+    undo: dict | None = None
 
 
 def run_command(argv: list[str], timeout: float = 5.0) -> str:

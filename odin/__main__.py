@@ -160,6 +160,24 @@ def cmd_check(args, cfg: Config) -> int:
     except Exception as exc:
         record("configured apps", BAD, str(exc))
 
+    # --- configured folders and pages ---
+    try:
+        from pathlib import Path as _Path
+
+        missing_folders = []
+        for alias, target in cfg.get("folders", {}).items():
+            if target.startswith(("http://", "https://", "trash://", "file://")):
+                continue
+            if not _Path(target).expanduser().is_dir():
+                missing_folders.append(f"{alias} -> {target}")
+        folders = len(cfg.get("folders", {}))
+        pages = len(cfg.get("web", {}))
+        record("configured places", WARN if missing_folders else OK,
+               "missing: " + ", ".join(missing_folders) if missing_folders
+               else f"{folders} folders, {pages} pages")
+    except Exception as exc:
+        record("configured places", BAD, str(exc))
+
     # --- brightness writability ---
     try:
         from .actions.system import _backlight, brightness_percent

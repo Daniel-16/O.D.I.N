@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import json
 import logging
 import signal
@@ -11,7 +12,7 @@ from . import intents as intent_mod
 from .actions import ActionError, Context, dispatch
 from .audio import Microphone
 from .config import Config
-from .intents import IntentTable, confirm_grammar, wake_grammar
+from .intents import ALWAYS, CHATTY, IntentTable, confirm_grammar, wake_grammar
 from .listen import NO_SPEECH, CommandListener
 from .speech import ASK, FAIL, OK, WAKE, Speaker
 from .wake import VoskWakeEngine
@@ -20,6 +21,11 @@ log = logging.getLogger("odin.daemon")
 
 # Grammar used while in standby: only a resume phrase gets through.
 _RESUME_GRAMMAR = json.dumps(["start listening", "wake up", intent_mod.UNK])
+
+# Above this many plausible commands, a suggestion is a guess rather than help,
+# so ODIN says it did not understand instead. A bare "open" fits ~40 phrases;
+# offering two of them at random is worse than admitting it did not catch it.
+_MAX_AMBIGUOUS = 4
 
 
 def load_model(cfg: Config):
@@ -42,7 +48,20 @@ class Odin:
         self.announce = announce
         self.model = model or load_model(cfg)
         self.table = IntentTable(cfg)
-        self.command_grammar = self.table.command_grammar()
+        # The wake phrases are part of the command grammar on purpose. While a
+        # follow-up window is open, saying "hey odin" again reaches the command
+        # recogniser; without the phrase in its grammar it has to map those
+        # sounds onto *some* command, and was observed turning "hey odin" into
+        # "louder" and changing the volume. With it in the grammar the wake
+        # word is recognised as itself and treated as a re-wake.
+        self.wake_phrases = {
+            phrase for phrase in json.loads(wake_grammar(cfg))
+            if not phrase.startswith("[")
+        }
+        self.command_grammar = json.dumps(
+            sorted(set(self.table.phrases) | self.wake_phrases)
+            + [intent_mod.UNK]
+        )
         self.mic = Microphone(
             device=cfg["audio"]["device"] or None,
             sample_rate=cfg["audio"]["sample_rate"],
@@ -96,36 +115,183 @@ class Odin:
         self.speaker.beep(WAKE)
         # Let the rest of the wake word go by before listening for a command.
         self.mic.discard_for(float(self.cfg["wake"]["settle_ms"]) / 1000.0)
+
+        follow_up = float(self.cfg["listen"]["follow_up_s"])
+        max_turns = max(1, int(self.cfg["listen"]["max_turns"]))
+
+        for turn in range(max_turns):
+            keep_going = self._one_turn(
+                first=(turn == 0),
+                # After acting, wait only briefly for a chained command.
+                no_speech_timeout=None if turn == 0 else follow_up,
+            )
+            if not keep_going or follow_up <= 0:
+                return
+        log.info("reached the %d-command limit for one wake word", max_turns)
+
+    def _one_turn(self, first: bool, no_speech_timeout: float | None) -> bool:
+        """Listen for one command and act on it.
+
+        Returns True to keep the follow-up window open, False to go back to
+        waiting for the wake word.
+        """
         grammar = _RESUME_GRAMMAR if self.ctx.standby else self.command_grammar
-        result = self.listener.listen(self.mic, grammar)
+        result = self.listener.listen(
+            self.mic, grammar,
+            no_speech_timeout=no_speech_timeout,
+            threshold_scale=1.0 if first else float(
+                self.cfg["listen"]["follow_up_threshold_scale"]),
+        )
 
         if self.cfg["log"]["transcripts"]:
             log.info("heard: %r (%s) candidates=%s",
                      result.text, result.reason, list(result.candidates))
 
         if not result.ok:
-            if result.reason == NO_SPEECH:
+            # Only complain if nothing was ever said; a quiet follow-up
+            # window closing is the normal, silent case.
+            if first:
                 log.info("no command followed the wake word")
-            self.speaker.beep(FAIL)
-            return
+                self.speaker.beep(FAIL)
+            return False
 
-        match = self.table.match_any(result.candidates or (result.text,))
+        candidates = result.candidates or (result.text,)
+
+        # Heard the wake word again rather than a command: start the turn over
+        # instead of acting on a misreading of it. Any hypothesis containing a
+        # wake phrase counts, not just the top one - live, the wake word came
+        # back as ["louder", "hey odin", "odin"] and running "louder" was
+        # plainly wrong.
+        wake_heard = [c for c in candidates if c in self.wake_phrases]
+        if wake_heard:
+            log.info("re-woken by %r (hypotheses: %s)",
+                     wake_heard[0], list(candidates))
+            self.speaker.beep(WAKE)
+            self.mic.discard_for(
+                float(self.cfg["wake"]["settle_ms"]) / 1000.0)
+            return True
+
+        match = self.table.match_any(candidates)
         if match is None:
             log.info("no intent matched %r", result.text)
-            self.speaker.beep(FAIL)
-            self.speaker.say("I did not get that.")
-            return
+            return self._unmatched(result)
 
         if self.ctx.standby and match.intent.handler != "meta.resume":
             log.info("in standby, ignoring %s", match.intent.name)
-            return
+            return False
 
         if match.intent.confirm and self.cfg["system"]["confirm_destructive"]:
             if not self._confirm(match.intent.name):
                 self.speaker.say("Cancelled.")
-                return
+                return True
 
         self._execute(match)
+        return True
+
+    # -- clarification ----------------------------------------------------
+    def _suggest(self, result) -> list[tuple[str, object]]:
+        """Known phrases that are close to what was heard, best first.
+
+        Destructive intents are never suggested: a misheard phrase should not
+        be able to put "shut down" in ODIN's mouth.
+        """
+        cutoff = float(self.cfg["listen"]["clarify_cutoff"])
+        phrases = self.table.phrases
+        scored: dict[str, float] = {}
+
+        def consider(phrase: str, score: float) -> None:
+            if score > scored.get(phrase, 0.0):
+                scored[phrase] = score
+
+        for text in (result.candidates or (result.text,)):
+            words = text.split()
+            if not words:
+                continue
+            # A command cut short: every word matches the start of a phrase.
+            # Scored above 1.0 so truncations beat mere string similarity,
+            # with shorter completions preferred.
+            for phrase in phrases:
+                phrase_words = phrase.split()
+                if (len(phrase_words) > len(words)
+                        and phrase_words[:len(words)] == words):
+                    consider(phrase, 1.0 + 1.0 / len(phrase_words))
+            # Misheard rather than cut short.
+            for phrase in difflib.get_close_matches(
+                    text, phrases, n=4, cutoff=cutoff):
+                consider(phrase,
+                         difflib.SequenceMatcher(None, text, phrase).ratio())
+
+        if not scored:
+            return []
+
+        # Collapse to intents: many phrases map to the same action.
+        plausible = {
+            match.intent.name
+            for phrase in scored
+            if (match := self.table.match(phrase)) and not match.intent.confirm
+        }
+        if len(plausible) > _MAX_AMBIGUOUS:
+            log.info("%d plausible commands for %r; not guessing",
+                     len(plausible), result.text)
+            return []
+
+        options: list[tuple[str, object]] = []
+        seen: set[str] = set()
+        for phrase in sorted(scored, key=lambda p: scored[p], reverse=True):
+            match = self.table.match(phrase)
+            if match is None or match.intent.confirm:
+                continue
+            if match.intent.name in seen:
+                continue
+            seen.add(match.intent.name)
+            options.append((phrase, match))
+            if len(options) == 2:
+                break
+        return options
+
+    def _unmatched(self, result) -> bool:
+        """Nothing matched. Offer the nearest thing ODIN does know."""
+        if not self.cfg["listen"]["clarify"]:
+            self.speaker.beep(FAIL)
+            self.speaker.say("I did not get that.")
+            return True
+
+        options = self._suggest(result)
+        if not options:
+            self.speaker.beep(FAIL)
+            self.speaker.say("I did not get that.")
+            return True
+
+        if len(options) == 1:
+            question = f"Did you mean {options[0][0]}?"
+        else:
+            question = f"Did you mean {options[0][0]}, or {options[1][0]}?"
+        log.info("clarifying: %s", question)
+        self.speaker.say(question)
+        self.speaker.beep(ASK)
+
+        grammar = json.dumps(
+            [phrase for phrase, _ in options]
+            + ["yes", "no", "cancel", intent_mod.UNK]
+        )
+        reply = self.listener.listen(self.mic, grammar)
+        heard = set(reply.candidates or (reply.text,))
+        log.info("clarification reply: %r", reply.text)
+
+        if heard & intent_mod.NO_WORDS:
+            self.speaker.say("Never mind.")
+            return True
+        for phrase, match in options:
+            if phrase in heard:
+                self._execute(match)
+                return True
+        # "yes" is only unambiguous when a single option was offered.
+        if len(options) == 1 and (heard & intent_mod.YES_WORDS):
+            self._execute(options[0][1])
+            return True
+
+        self.speaker.beep(FAIL)
+        return True
 
     def _confirm(self, what: str) -> bool:
         log.info("asking for confirmation: %s", what)
@@ -139,6 +305,7 @@ class Odin:
             heard & intent_mod.NO_WORDS
         )
 
+    # -- acting -----------------------------------------------------------
     def _execute(self, match) -> None:
         intent = match.intent
         log.info("running %s %s", intent.name, match.slots or "")
@@ -147,7 +314,7 @@ class Odin:
         except ActionError as exc:
             log.warning("%s failed: %s", intent.name, exc)
             self.speaker.beep(FAIL)
-            self.speaker.say(str(exc))
+            self.speaker.say(str(exc))  # failures are always spoken
             return
         except Exception:
             log.exception("%s raised unexpectedly", intent.name)
@@ -156,7 +323,15 @@ class Odin:
             return
 
         reply = spoken if spoken is not None else intent.reply
-        if reply:
+        if reply and self._should_speak(intent):
             self.speaker.say(reply)
         else:
             self.speaker.beep(OK)
+
+    def _should_speak(self, intent) -> bool:
+        """ALWAYS replies are the answer itself; CHATTY ones are a courtesy."""
+        if intent.voice == ALWAYS:
+            return True
+        if intent.voice == CHATTY:
+            return self.cfg["speech"]["verbosity"] == "chatty"
+        return False

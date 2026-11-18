@@ -49,3 +49,31 @@ def previous_track(ctx: Context, slots: dict) -> str | None:
 
 def status(ctx: Context, slots: dict) -> str | None:
     return _playerctl(ctx, "status") or None
+
+
+_MAX_TITLE = 80
+
+
+def now_playing(ctx: Context, slots: dict) -> str | None:
+    """Answer "what is playing" from MPRIS metadata."""
+    try:
+        raw = _playerctl(
+            ctx, "metadata", "--format", "{{status}}|{{title}}|{{artist}}")
+    except ActionError as exc:
+        if str(exc) == NO_PLAYER:
+            return "Nothing is playing."
+        raise
+
+    parts = (raw.split("|") + ["", "", ""])[:3]
+    state, title, artist = (part.strip() for part in parts)
+    if not title:
+        return "Nothing is playing."
+    if len(title) > _MAX_TITLE:  # stream titles can be enormous
+        title = title[:_MAX_TITLE].rstrip() + "..."
+
+    label = f"{title}, by {artist}" if artist else title
+    if state.lower() == "playing":
+        return f"Playing {label}."
+    if state.lower() == "paused":
+        return f"Paused: {label}."
+    return f"{label}."

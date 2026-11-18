@@ -39,7 +39,7 @@ REFUSED = {"shut down", "shut down the computer", "power off", "reboot",
            "lock screen", "lock the screen", "lock my screen"}
 
 GAP_S = 1.6       # between the wake word and the command
-SETTLE_S = 4.0    # time for ODIN to act and reply before we read the journal
+REPLY_S = 4.0     # time for ODIN to act and reply before we read the journal
 
 
 def service_running() -> bool:
@@ -65,6 +65,9 @@ def main(argv: list[str]) -> int:
 
     voice = PiperVoice.load(str(cfg.voice_path))
     wake = cfg["wake"]["phrases"][0]
+    # Each command must be preceded by its own wake word, so wait for the
+    # follow-up window to close before starting the next one.
+    settle_s = REPLY_S + float(cfg["listen"]["follow_up_s"]) + 1.0
 
     def render(text: str) -> tuple[np.ndarray, int]:
         chunks = list(voice.synthesize(text))
@@ -89,7 +92,7 @@ def main(argv: list[str]) -> int:
         since = time.strftime("%Y-%m-%d %H:%M:%S")
         time.sleep(1.0)  # keep the journal window clean
         sd.play(clip, samplerate=rate, blocking=True)
-        time.sleep(SETTLE_S)
+        time.sleep(settle_s)
 
         log = subprocess.run(
             ["journalctl", "--user", "-u", "odin", "--since", since,
@@ -97,11 +100,15 @@ def main(argv: list[str]) -> int:
             capture_output=True, text=True,
         ).stdout
 
-        woke = "wake:" in log
+        # A re-wake counts: if a follow-up window was still open, the wake
+        # word is handled there and no "wake:" line is written.
+        woke = ("wake:" in log) or ("re-woken" in log)
         heard = ""
         ran = ""
         for line in log.splitlines():
-            if "heard:" in line:
+            # Skip the follow-up window closing, which is the last "heard"
+            # line of every exchange and says nothing about the command.
+            if "heard:" in line and "(no_speech)" not in line:
                 heard = line.split("heard:", 1)[1].strip()
             if "running " in line:
                 ran = line.split("running ", 1)[1].strip()

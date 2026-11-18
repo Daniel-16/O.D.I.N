@@ -97,16 +97,13 @@ def _read_int(path: Path) -> int:
         raise ActionError(f"could not read {path.name}") from exc
 
 
-def _step_brightness(ctx: Context, direction: int) -> str | None:
-    step = int(ctx.cfg["brightness"]["step"]) * direction
+def _apply_brightness(ctx: Context, target: int) -> str:
+    """Set the backlight to an absolute percentage."""
     device = _backlight()
     maximum = _read_int(device / "max_brightness")
-    current = _read_int(device / "brightness")
     if maximum <= 0:
         raise ActionError("could not read the brightness range")
-
-    percent = round(current * 100 / maximum)
-    target = min(100, max(MIN_BRIGHTNESS_PERCENT, percent + step))
+    target = min(100, max(MIN_BRIGHTNESS_PERCENT, int(target)))
     value = int(round(target * maximum / 100))
 
     try:
@@ -124,12 +121,59 @@ def _step_brightness(ctx: Context, direction: int) -> str | None:
     return f"Brightness {target} percent."
 
 
+def _step_brightness(ctx: Context, direction: int) -> str | None:
+    step = int(ctx.cfg["brightness"]["step"]) * direction
+    percent = brightness_percent()
+    if percent is None:
+        raise ActionError("I could not read the brightness.")
+    ctx.undo = {
+        "kind": "brightness",
+        "percent": percent,
+        "describe": f"brightness {percent} percent",
+    }
+    return _apply_brightness(ctx, percent + step)
+
+
+def restore_brightness(ctx: Context, state: dict) -> None:
+    _apply_brightness(ctx, int(state.get("percent", 50)))
+
+
 def brightness_up(ctx: Context, slots: dict) -> str | None:
     return _step_brightness(ctx, +1)
 
 
 def brightness_down(ctx: Context, slots: dict) -> str | None:
     return _step_brightness(ctx, -1)
+
+
+# ----------------------------------------------------------------- battery
+_BATTERY_ROOT = Path("/sys/class/power_supply")
+_BATTERY_WORDS = {
+    "charging": "charging",
+    "discharging": "on battery",
+    "not charging": "not charging",
+    "full": "full",
+}
+
+
+def battery(ctx: Context, slots: dict) -> str | None:
+    for device in sorted(_BATTERY_ROOT.glob("BAT*")):
+        capacity = device / "capacity"
+        if not capacity.exists():
+            continue
+        percent = _read_int(capacity)
+        raw = ""
+        status_file = device / "status"
+        if status_file.exists():
+            try:
+                raw = status_file.read_text().strip().lower()
+            except OSError:
+                raw = ""
+        words = _BATTERY_WORDS.get(raw)
+        if words:
+            return f"Battery {percent} percent, {words}."
+        return f"Battery {percent} percent."
+    raise ActionError("I could not find a battery.")
 
 
 def brightness_percent() -> int | None:
