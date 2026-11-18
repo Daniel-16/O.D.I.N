@@ -1,0 +1,22 @@
+[Unit]
+Description=ODIN offline voice assistant
+Documentation=file://@ROOT@/README.md
+# The graphical session provides the D-Bus session bus, WAYLAND_DISPLAY and
+# PipeWire, all of which ODIN needs to hear and to act.
+After=graphical-session.target pipewire.service wireplumber.service
+PartOf=graphical-session.target
+ConditionPathExists=@ROOT@/.venv/bin/python
+
+[Service]
+Type=simple
+WorkingDirectory=@ROOT@
+ExecStart=@ROOT@/.venv/bin/python -m odin run
+Restart=always
+RestartSec=3
+# Always-on, but never at the expense of the foreground.
+Nice=5
+MemoryMax=2G
+SyslogIdentifier=odin
+
+[Install]
+WantedBy=graphical-session.target

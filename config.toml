@@ -1,0 +1,92 @@
+# ODIN configuration.
+#
+# After editing this file run `./odin check` — it validates every spoken phrase
+# against the Vosk lexicon and every app against your installed .desktop files.
+# A word that is not in the lexicon can never be recognised, so `check` is the
+# difference between a command that works and one that silently never fires.
+
+[audio]
+device = ""          # "" = system default input device
+sample_rate = 16000  # the Vosk model requires 16 kHz
+block_ms = 125       # capture granularity; lower = snappier, more CPU
+
+[wake]
+phrases = ["hey odin", "hi odin"]
+allow_bare_name = false  # true also wakes on a bare "odin" (expect false triggers)
+on_partial = true        # fire mid-utterance; much snappier
+refractory_s = 1.5       # ignore re-triggers for this long after waking
+settle_ms = 300          # drop this much audio after waking (the wake-word tail)
+
+[listen]
+max_s = 6.0              # hard cap on one command
+silence_end_s = 0.8      # end the command after this much trailing silence
+no_speech_timeout_s = 3.0  # give up if nothing is said after the beep
+energy_threshold = 300   # RMS (int16) above which a block counts as speech
+alternatives = 5         # N-best hypotheses to consider (see odin/listen.py)
+
+[speech]
+enabled = true
+voice = "models/en_US-ryan-medium.onnx"
+preload = true           # load Piper at startup so the first reply is not slow
+beeps = true
+volume = 0.5             # 0..1 scaling for ODIN's own voice and beeps
+
+[media]
+# Tried in order; "%any" falls back to whatever is on the MPRIS bus.
+players = "spotify,vlc,chromium,firefox,%any"
+
+[volume]
+step = 5                 # percent per "volume up"
+limit = 1.0              # never exceed 100% (prevents clipping/damage)
+
+[brightness]
+step = 10                # percent per "brightness up"
+
+[system]
+screenshot_dir = "~/Pictures"
+confirm_destructive = true  # shut down / restart require a spoken "yes"
+
+# Spoken alias -> .desktop id. The alias words must be in the Vosk lexicon;
+# the .desktop id has no such restriction.
+[apps]
+"firefox" = "firefox_firefox"
+"browser" = "firefox_firefox"
+"chrome" = "google-chrome"
+"google chrome" = "google-chrome"
+"tor browser" = "start-tor-browser"
+"spotify" = "spotify_spotify"
+"music" = "spotify_spotify"
+"media player" = "vlc"
+"video player" = "vlc"
+"telegram" = "telegram-desktop_telegram-desktop"
+"discord" = "discord_discord"
+"zoom" = "Zoom"
+"mail" = "thunderbird_thunderbird"
+"email" = "thunderbird_thunderbird"
+"thunderbird" = "thunderbird_thunderbird"
+"terminal" = "org.gnome.Ptyxis"
+"files" = "org.gnome.Nautilus"
+"file manager" = "org.gnome.Nautilus"
+"settings" = "org.gnome.Settings"
+"calculator" = "org.gnome.Calculator"
+"calendar" = "org.gnome.Calendar"
+"clocks" = "org.gnome.clocks"
+"text editor" = "org.gnome.TextEditor"
+"code" = "com.microsoft.VSCode"
+"visual studio code" = "com.microsoft.VSCode"
+"cursor" = "cursor"
+"claude" = "com.anthropic.Claude"
+"camera" = "org.gnome.Snapshot"
+"image viewer" = "org.gnome.Loupe"
+"document viewer" = "org.gnome.Papers"
+"disks" = "org.gnome.DiskUtility"
+"libre office" = "libreoffice-startcenter"
+"app center" = "snap-store_snap-store"
+"system monitor" = "net.nokyan.Resources"
+"extension manager" = "com.mattjakeman.ExtensionManager"
+"postman" = "postman_postman"
+"obs" = "com.obsproject.Studio"
+
+[log]
+level = "info"       # debug | info | warning | error
+transcripts = true   # log what ODIN heard (helps tuning; stays on this machine)
