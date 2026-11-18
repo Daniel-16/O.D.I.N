@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT))
 import numpy as np
 
 from odin.config import Config
-from odin.intents import IntentTable, wake_grammar
+from odin.intents import IntentTable, wake_grammar, wake_phrases
 from odin.listen import candidates_from, make_recogniser
 from odin.wake import VoskWakeEngine
 
@@ -108,22 +108,28 @@ def main() -> int:
 
     # ---- wake word -------------------------------------------------------
     print("\nwake word")
-    engine = VoskWakeEngine(
-        model, wake_grammar(cfg), on_partial=cfg["wake"]["on_partial"],
-        refractory_s=0.0,
-    )
-    for phrase in json.loads(wake_grammar(cfg)):
-        if phrase.startswith("["):
-            continue
-        hit = feed_wake(engine, synth(voice, phrase))
+    def fresh_engine():
+        # A new engine per clip: decoder state otherwise carries across
+        # utterances and one clip's "hey" can combine with the next clip's
+        # audio into a false hit.
+        return VoskWakeEngine(
+            model, wake_grammar(cfg), phrases=wake_phrases(cfg),
+            on_partial=cfg["wake"]["on_partial"], refractory_s=0.0,
+        )
+
+    for phrase in wake_phrases(cfg):
+        hit = feed_wake(fresh_engine(), synth(voice, phrase))
         print(f"  {'PASS' if hit else 'FAIL'}  {phrase!r}")
         failures += 0 if hit else 1
 
     # Things that must NOT wake it.
     print("\nwake word rejects")
     for phrase in ("open the terminal", "what is the weather",
-                   "hey google", "play some music"):
-        hit = feed_wake(engine, synth(voice, phrase))
+                   "hey google", "play some music",
+                   # Reported live: a bare greeting woke ODIN.
+                   "hey", "hi", "hey there", "hi there", "hey you",
+                   "okay", "hello", "hey what is up", "hi how are you"):
+        hit = feed_wake(fresh_engine(), synth(voice, phrase))
         print(f"  {'PASS' if not hit else 'FAIL'}  {phrase!r}"
               f"{' (false trigger)' if hit else ''}")
         failures += 1 if hit else 0

@@ -12,7 +12,8 @@ from . import intents as intent_mod
 from .actions import ActionError, Context, dispatch
 from .audio import Microphone
 from .config import Config
-from .intents import ALWAYS, CHATTY, IntentTable, confirm_grammar, wake_grammar
+from .intents import (ALWAYS, CHATTY, IntentTable, confirm_grammar,
+                      wake_grammar, wake_phrases)
 from .listen import NO_SPEECH, CommandListener
 from .speech import ASK, FAIL, OK, WAKE, Speaker
 from .wake import VoskWakeEngine
@@ -54,9 +55,14 @@ class Odin:
         # sounds onto *some* command, and was observed turning "hey odin" into
         # "louder" and changing the volume. With it in the grammar the wake
         # word is recognised as itself and treated as a re-wake.
-        self.wake_phrases = {
-            phrase for phrase in json.loads(wake_grammar(cfg))
-            if not phrase.startswith("[")
+        # Only the real wake phrases - not the decoy words that share the
+        # wake grammar.
+        self.wake_phrases = set(wake_phrases(cfg))
+        # The individual words of those phrases. Half of a wake word ("hey",
+        # "odin") reaching the command recogniser is leftover audio, not a
+        # command, and must not draw a reply.
+        self.wake_words = {
+            word for phrase in self.wake_phrases for word in phrase.split()
         }
         self.command_grammar = json.dumps(
             sorted(set(self.table.phrases) | self.wake_phrases)
@@ -71,6 +77,7 @@ class Odin:
         self.wake = VoskWakeEngine(
             self.model,
             wake_grammar(cfg),
+            phrases=wake_phrases(cfg),
             sample_rate=cfg["audio"]["sample_rate"],
             on_partial=cfg["wake"]["on_partial"],
             refractory_s=cfg["wake"]["refractory_s"],
@@ -171,6 +178,13 @@ class Odin:
                 float(self.cfg["wake"]["settle_ms"]) / 1000.0)
             return True
 
+        # Part of a wake word and nothing else: the tail of "hey odin", or a
+        # stray "hey" picked up while the follow-up window was open. Keep
+        # listening without comment.
+        if self._is_wake_fragment(candidates[0]):
+            log.info("ignoring wake-word fragment %r", candidates[0])
+            return True
+
         match = self.table.match_any(candidates)
         if match is None:
             log.info("no intent matched %r", result.text)
@@ -187,6 +201,11 @@ class Odin:
 
         self._execute(match)
         return True
+
+    def _is_wake_fragment(self, text: str) -> bool:
+        """True if the text is made only of wake-word words."""
+        words = text.split()
+        return bool(words) and all(word in self.wake_words for word in words)
 
     # -- clarification ----------------------------------------------------
     def _suggest(self, result) -> list[tuple[str, object]]:

@@ -13,7 +13,8 @@ import numpy as np
 
 from odin.audio import rms
 from odin.config import Config
-from odin.intents import IntentTable, confirm_grammar, wake_grammar
+from odin.intents import (DEFAULT_WAKE_DECOYS, IntentTable, confirm_grammar,
+                          wake_grammar, wake_phrases)
 from odin.listen import _clean, candidates_from
 from odin.vocab import words_in
 from odin.wake import VoskWakeEngine
@@ -127,16 +128,53 @@ class TestHandlers(unittest.TestCase):
 
 class TestGrammars(unittest.TestCase):
     def test_bare_name_is_excluded_by_default(self):
-        self.assertNotIn("odin", json.loads(wake_grammar(make_cfg())))
+        self.assertNotIn("odin", wake_phrases(make_cfg()))
 
     def test_bare_name_can_be_enabled(self):
         cfg = make_cfg(wake={"allow_bare_name": True})
-        self.assertIn("odin", json.loads(wake_grammar(cfg)))
+        self.assertIn("odin", wake_phrases(cfg))
 
     def test_confirm_grammar_offers_yes_and_no(self):
         grammar = json.loads(confirm_grammar())
         self.assertIn("yes", grammar)
         self.assertIn("no", grammar)
+
+
+class TestWakeGrammarDecoys(unittest.TestCase):
+    """The wake grammar is wider than the wake phrases, on purpose.
+
+    Reported live: a bare "hey" woke ODIN. A Vosk grammar is a bigram model
+    over only its own words, so with nothing but {hey, hi, odin} in it "hey"
+    had no legal continuation except "odin". Decoys give the decoder an
+    alternative - but must never wake ODIN themselves.
+    """
+
+    def setUp(self):
+        self.cfg = make_cfg()
+
+    def test_grammar_contains_the_decoys(self):
+        grammar = json.loads(wake_grammar(self.cfg))
+        for word in ("hey", "hi", "hello", "okay", "there", "you"):
+            self.assertIn(word, grammar, word)
+
+    def test_wake_phrases_exclude_the_decoys(self):
+        phrases = wake_phrases(self.cfg)
+        self.assertEqual(phrases, ["hey odin", "hi odin"])
+        for word in DEFAULT_WAKE_DECOYS:
+            self.assertNotIn(word, phrases, word)
+
+    def test_grammar_is_much_wider_than_the_wake_set(self):
+        grammar = json.loads(wake_grammar(self.cfg))
+        self.assertGreater(len(grammar), len(wake_phrases(self.cfg)) + 50)
+
+    def test_extra_decoys_are_added(self):
+        cfg = make_cfg(wake={"extra_decoys": ["bruv", "mate"]})
+        grammar = json.loads(wake_grammar(cfg))
+        self.assertIn("mate", grammar)
+        self.assertNotIn("mate", wake_phrases(cfg))
+
+    def test_the_unknown_token_is_present(self):
+        self.assertIn("[unk]", json.loads(wake_grammar(self.cfg)))
 
 
 class TestWakeMatching(unittest.TestCase):
@@ -158,6 +196,11 @@ class TestWakeMatching(unittest.TestCase):
 
     def test_phrase_must_end_the_text(self):
         self.assertIsNone(self.engine._hit("hey odin play some music"))
+
+    def test_decoy_words_do_not_wake(self):
+        for text in ("hey", "hi", "hello", "okay", "hey there", "hi there",
+                     "odin", "hey you"):
+            self.assertIsNone(self.engine._hit(text), text)
 
 
 class TestListenCleaning(unittest.TestCase):

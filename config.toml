@@ -16,6 +16,11 @@ allow_bare_name = false  # true also wakes on a bare "odin" (expect false trigge
 on_partial = true        # fire mid-utterance; much snappier
 refractory_s = 1.5       # ignore re-triggers for this long after waking
 settle_ms = 300          # drop this much audio after waking (the wake-word tail)
+# Words the wake recogniser may hear instead of the wake word. ODIN ships a
+# list of common words for this; anything here is added to it. Without them a
+# bare "hey" is decoded as "hey odin", because the grammar gives "hey" no
+# other legal continuation. These never wake ODIN.
+extra_decoys = []
 
 [listen]
 max_s = 6.0              # hard cap on one command

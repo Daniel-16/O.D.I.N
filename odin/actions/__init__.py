@@ -52,6 +52,42 @@ def run_command(argv: list[str], timeout: float = 5.0) -> str:
     return (proc.stdout or "").strip()
 
 
+def spawn_detached(argv: list[str], label: str) -> None:
+    """Start a program so that it outlives ODIN.
+
+    ODIN runs as a systemd --user service, and systemd kills every process in
+    a unit's control group when that unit stops or restarts. A child process
+    inherits ODIN's control group, so apps ODIN launched were being killed the
+    moment ODIN was restarted - and their memory counted against ODIN's own
+    limit, risking an OOM kill of the lot.
+
+    systemd-run puts each launch in its own transient scope, outside ODIN's
+    control group, so restarting ODIN no longer touches the apps it started.
+    """
+    if shutil.which(argv[0]) is None:
+        raise ActionError(f"{argv[0]} is not installed")
+
+    command = list(argv)
+    if shutil.which("systemd-run"):
+        command = [
+            "systemd-run", "--user", "--scope", "--quiet", "--collect", "--",
+            *argv,
+        ]
+    else:  # no systemd: at least detach from ODIN's session
+        log.warning("systemd-run missing; %s may not survive a restart", label)
+
+    try:
+        subprocess.Popen(
+            command,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        raise ActionError(f"could not start {label}: {exc}") from exc
+
+
 def resolve(handler: str) -> Callable[[Context, dict], str | None]:
     module_name, _, function_name = handler.rpartition(".")
     if not module_name or module_name not in _MODULES:

@@ -77,6 +77,7 @@ class DaemonTestCase(unittest.TestCase):
         self.odin.cfg = self.cfg
         self.odin.table = IntentTable(self.cfg)
         self.odin.wake_phrases = {"hey odin", "hi odin"}
+        self.odin.wake_words = {"hey", "hi", "odin"}
         self.odin.command_grammar = self.odin.table.command_grammar()
         self.odin.speaker = StubSpeaker()
         self.odin.mic = StubMic()
@@ -353,6 +354,23 @@ class TestReWake(DaemonTestCase):
         )
         self.odin._handle_wake()
         self.assertEqual(self.calls, [])
+
+    def test_half_a_wake_word_is_ignored_silently(self):
+        # Observed live: the tail of "hey odin" came back as "hey" and drew
+        # an "I did not get that" after every command.
+        self.set_cfg(listen={"follow_up_s": 4.0})
+        self.script(heard("hey"), heard("volume up"),
+                    ListenResult("", NO_SPEECH))
+        self.odin._handle_wake()
+        self.assertEqual([c[0] for c in self.calls], ["volume.up"])
+        self.assertEqual(self.odin.speaker.said, [])
+
+    def test_a_stray_odin_is_not_a_command(self):
+        self.set_cfg(listen={"follow_up_s": 0.0})
+        self.script(heard("odin"))
+        self.odin._handle_wake()
+        self.assertEqual(self.calls, [])
+        self.assertNotIn("I did not get that.", self.odin.speaker.said)
 
     def test_follow_up_demands_a_louder_voice(self):
         # Room noise should not reach the recogniser in an unprompted window.

@@ -17,6 +17,7 @@ _DEFAULTS: dict[str, Any] = {
         "on_partial": True,
         "refractory_s": 1.5,
         "settle_ms": 300,
+        "extra_decoys": [],
     },
     "listen": {
         "max_s": 6.0,

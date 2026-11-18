@@ -13,7 +13,13 @@ WorkingDirectory=@ROOT@
 ExecStart=@ROOT@/.venv/bin/python -m odin run
 Restart=always
 RestartSec=3
-# Always-on, but never at the expense of the foreground.
+# Only ODIN itself is killed on stop or restart. Without this, systemd kills
+# the entire control group, which includes any app ODIN launched - restarting
+# ODIN would close the user's apps. Launches also go into their own transient
+# scope (see spawn_detached in odin/actions/__init__.py); this is the backstop.
+KillMode=process
+# Always-on, but never at the expense of the foreground. The memory cap
+# applies to ODIN alone, now that launched apps live outside its group.
 Nice=5
 MemoryMax=2G
 SyslogIdentifier=odin

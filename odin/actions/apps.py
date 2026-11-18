@@ -14,10 +14,9 @@ from __future__ import annotations
 import logging
 import os
 import shutil
-import subprocess
 from pathlib import Path
 
-from . import ActionError, Context
+from . import ActionError, Context, spawn_detached
 
 log = logging.getLogger("odin.actions.apps")
 
@@ -72,20 +71,7 @@ def launch(ctx: Context, slots: dict) -> str | None:
     path = resolve_desktop(desktop_id)
     if path is None:
         raise ActionError(f"{spoken} does not seem to be installed.")
-    if shutil.which("gtk-launch") is None:
-        raise ActionError("gtk-launch is not installed")
-
     launch_id = path.stem
-    try:
-        subprocess.Popen(
-            ["gtk-launch", launch_id],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            stdin=subprocess.DEVNULL,
-            start_new_session=True,  # survives the daemon
-        )
-    except OSError as exc:
-        raise ActionError(f"could not launch {spoken}: {exc}") from exc
-
+    spawn_detached(["gtk-launch", launch_id], spoken)
     log.info("launched %s (%s)", spoken, launch_id)
     return f"Opening {display_name(path, spoken)}."

@@ -10,10 +10,9 @@ from __future__ import annotations
 
 import logging
 import shutil
-import subprocess
 from pathlib import Path
 
-from . import ActionError, Context
+from . import ActionError, Context, spawn_detached
 
 log = logging.getLogger("odin.actions.places")
 
@@ -22,20 +21,9 @@ _URI_SCHEMES = ("http://", "https://", "trash://", "mailto:", "file://")
 
 
 def _open(target: str, label: str) -> None:
-    opener = "gio" if shutil.which("gio") else "xdg-open"
-    argv = ["gio", "open", target] if opener == "gio" else ["xdg-open", target]
-    if shutil.which(argv[0]) is None:
-        raise ActionError("no program available to open that")
-    try:
-        subprocess.Popen(
-            argv,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            stdin=subprocess.DEVNULL,
-            start_new_session=True,  # outlives the daemon
-        )
-    except OSError as exc:
-        raise ActionError(f"could not open {label}: {exc}") from exc
+    argv = (["gio", "open", target] if shutil.which("gio")
+            else ["xdg-open", target])
+    spawn_detached(argv, label)
     log.info("opened %s (%s)", label, target)
 
 

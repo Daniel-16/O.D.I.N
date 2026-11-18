@@ -109,6 +109,14 @@ no GPU and no training step — and why it works offline from the first run.
 
 Two consequences worth knowing:
 
+* **The wake grammar is wider than the wake word.** A Vosk grammar is a bigram
+  model over only the words it contains. With nothing but {hey, hi, odin} in
+  it, "hey" has no legal continuation except "odin" — so a bare "hey", or "hey
+  there", or "okay", was decoded as "hey odin" and woke ODIN. The grammar
+  therefore also carries ~110 decoy words that give the decoder somewhere else
+  to go. Decoys never wake ODIN: `wake_phrases()` is the match set and is
+  deliberately separate from the grammar. Add your own with
+  `wake.extra_decoys` if some phrase you say often still triggers it.
 * **Only configured words can ever be heard.** A word that is not in the Vosk
   lexicon is silently dropped from the grammar, so `odin check` validates every
   phrase against the lexicon. This is why "sound on" is the unmute phrase:
@@ -127,7 +135,7 @@ route that actually works:
 |---|---|---|
 | play / pause | MPRIS via `playerctl` | Wayland does not allow synthesising media keys |
 | volume | `wpctl` (WirePlumber) | PipeWire owns the sink, not ALSA |
-| open app | `gtk-launch` on the `.desktop` id | starts the app exactly as a click would |
+| open app | `gtk-launch` in a transient systemd scope | starts the app as a click would, *outside* ODIN's control group (see below) |
 | lock | `org.gnome.ScreenSaver` | `loginctl` needs a session the daemon does not have |
 | screenshot | xdg-desktop-portal | GNOME denies `org.gnome.Shell.Screenshot` to external callers |
 | brightness | sysfs + udev rule | GNOME exposes D-Bus brightness for the keyboard only, not the screen |
@@ -150,6 +158,7 @@ Everything lives in `config.toml`. The settings worth touching:
 | `listen.max_turns` | most commands accepted from one wake word |
 | `listen.clarify` / `clarify_cutoff` | whether to offer "did you mean …", and how close a match must be |
 | `folders` / `web` | spoken alias → folder path or URL |
+| `wake.extra_decoys` | extra words the wake recogniser may hear instead of the wake word |
 | `speech.volume` | how loud ODIN is |
 | `volume.step`, `brightness.step` | how big one "up" is |
 | `apps` | spoken alias → `.desktop` id |
@@ -201,6 +210,27 @@ command as a false start and keeps listening instead of giving up.
 Neither test says anything about how well ODIN hears *you* — that is what
 `wake-test` is for.
 
+## Apps ODIN opens are not ODIN's children
+
+systemd kills every process in a unit's control group when that unit stops, and
+a child process inherits its parent's group. Apps launched by ODIN were
+therefore being killed the instant ODIN restarted — and their memory counted
+against ODIN's 2 GB cap, putting the whole group at risk of an OOM kill.
+
+Two changes fix it, and both are needed:
+
+* every launch goes through `systemd-run --user --scope`, so the app gets its
+  own transient scope outside `odin.service` (see `spawn_detached` in
+  `odin/actions/__init__.py`);
+* `KillMode=process` in the unit, so stopping ODIN kills only ODIN. This is the
+  backstop for anything that still ends up in the group.
+
+To check it yourself, launch something by voice and look at where it landed:
+
+```bash
+systemctl --user status odin        # should list only the python process
+```
+
 ## Limits, stated plainly
 
 * **No window control.** "Close Firefox" or "switch to Chrome" are not offered:
@@ -209,6 +239,9 @@ Neither test says anything about how well ODIN hears *you* — that is what
   unsaved work) or a custom GNOME extension (breaks on updates).
 * **Bare "odin" is off by default** — one syllable, and it collides with
   "open". Use "hey odin" or "hi odin", or turn it on in `config.toml`.
+* **A true homophone still gets through.** "they owe him" sounds almost
+  exactly like "hey odin" and wakes it. Nothing in a closed-grammar design can
+  separate those two, and a person would mishear them too.
 * **Range is about 1–2 m** on the internal microphone in a quiet room. The
   biggest enemy of wake-word accuracy is music playing through the laptop's own
   speakers. ODIN mutes its own microphone while it speaks, but it cannot do

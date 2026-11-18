@@ -274,17 +274,62 @@ class IntentTable:
         return Match(intent=intent, text=key, slots=dict(slots))
 
 
-def wake_grammar(cfg) -> str:
-    """Grammar for the always-on wake word recogniser."""
+# Words the wake recogniser is allowed to hear *instead of* the wake word.
+#
+# A Vosk grammar is a bigram language model over only the words it contains.
+# With nothing but {hey, hi, odin} in it, "hey" has no legal continuation
+# except "odin", so saying "hey" alone - or "hey there", "okay", "hey what is
+# up" - was decoded as "hey odin" and woke ODIN. These decoys give the
+# decoder somewhere else to go. They are never treated as wake words; see
+# wake_phrases().
+DEFAULT_WAKE_DECOYS: tuple[str, ...] = (
+    # the wake words on their own, so a half-said wake word stays half-said
+    "hey", "hi", "odin",
+    # greetings and fillers that collide with "hey"/"hi"
+    "hello", "okay", "yeah", "yes", "no", "thanks", "please", "sorry",
+    "there", "you", "guys", "man", "what", "how", "are", "up", "is",
+    # common function words, so ordinary speech has a path through the model
+    "the", "be", "to", "of", "and", "a", "in", "that", "have", "i", "it",
+    "for", "not", "on", "with", "he", "as", "do", "at", "this", "but", "his",
+    "by", "from", "they", "we", "say", "her", "she", "or", "an", "will", "my",
+    "one", "all", "would", "their", "so", "out", "if", "about", "who", "get",
+    "which", "go", "me", "when", "make", "can", "like", "time", "just", "him",
+    "know", "take", "people", "into", "year", "your", "good", "some", "could",
+    "them", "see", "other", "than", "then", "now", "look", "only", "come",
+    "its", "over", "think", "also", "back", "after", "use", "two", "our",
+    "work", "first", "well", "way", "even", "new", "want", "because", "any",
+    "these", "give", "day", "most", "us", "owe",
+)
+
+
+def wake_phrases(cfg) -> list[str]:
+    """The phrases that actually count as a wake word.
+
+    Deliberately separate from the grammar: the grammar also contains decoy
+    words, and hearing one of those must not wake ODIN.
+    """
     phrases = [p.lower().strip() for p in cfg["wake"]["phrases"]]
     if cfg["wake"]["allow_bare_name"]:
         phrases.append("odin")
-    # Deduplicate while preserving order.
-    seen: list[str] = []
+    out: list[str] = []
     for phrase in phrases:
-        if phrase and phrase not in seen:
-            seen.append(phrase)
-    return json.dumps(seen + [UNK])
+        if phrase and phrase not in out:
+            out.append(phrase)
+    return out
+
+
+def wake_grammar(cfg) -> str:
+    """Grammar for the always-on wake word recogniser: wake phrases + decoys."""
+    entries = list(wake_phrases(cfg))
+    decoys = list(DEFAULT_WAKE_DECOYS)
+    decoys.extend(
+        str(word).lower().strip()
+        for word in cfg["wake"].get("extra_decoys", [])
+    )
+    for decoy in decoys:
+        if decoy and decoy not in entries:
+            entries.append(decoy)
+    return json.dumps(entries + [UNK])
 
 
 def confirm_grammar() -> str:

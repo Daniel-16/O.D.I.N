@@ -37,14 +37,20 @@ class VoskWakeEngine:
         self,
         model,
         grammar: str,
+        phrases: list[str] | None = None,
         sample_rate: int = 16000,
         on_partial: bool = True,
         refractory_s: float = 1.5,
     ):
+        """`grammar` is what the recogniser may hear; `phrases` is the subset
+        that wakes ODIN. They differ: the grammar also holds decoy words whose
+        only job is to give the decoder an alternative to the wake word."""
         from vosk import KaldiRecognizer
 
         self._rec = KaldiRecognizer(model, sample_rate, grammar)
-        self._phrases = [p for p in json.loads(grammar) if not p.startswith("[")]
+        if phrases is None:  # fall back to treating the grammar as the wake set
+            phrases = [p for p in json.loads(grammar) if not p.startswith("[")]
+        self._phrases = [p.lower().strip() for p in phrases if p]
         self._on_partial = on_partial
         self._refractory_s = refractory_s
         self._last_fire = 0.0

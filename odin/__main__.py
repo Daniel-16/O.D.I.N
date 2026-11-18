@@ -263,17 +263,17 @@ def cmd_mic_test(args, cfg: Config) -> int:
 def cmd_wake_test(args, cfg: Config) -> int:
     from .audio import Microphone
     from .daemon import load_model
-    from .intents import wake_grammar
+    from .intents import wake_grammar, wake_phrases
     from .wake import VoskWakeEngine
 
     model = load_model(cfg)
     engine = VoskWakeEngine(
-        model, wake_grammar(cfg),
+        model, wake_grammar(cfg), phrases=wake_phrases(cfg),
         sample_rate=cfg["audio"]["sample_rate"],
         on_partial=cfg["wake"]["on_partial"],
         refractory_s=cfg["wake"]["refractory_s"],
     )
-    print(f"\nSay the wake word. Grammar: {wake_grammar(cfg)}")
+    print(f"\nSay the wake word: {', '.join(wake_phrases(cfg))}")
     print("Every detection is printed below. Ctrl-C to stop.\n")
     hits = 0
     with Microphone(
