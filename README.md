@@ -2,7 +2,7 @@
 
 **O**ffline **D**aemon for **I**ntent **N**avigation
 
-An offline, voice-only assistant for this laptop. No cloud, no account, no
+An offline, voice-only assistant for Linux Ubuntu only. No cloud, no account, no
 network at runtime: the wake word, the speech recognition and the voice all run
 locally. Say **"hey odin"** or **"hi odin"**, wait for the beep, then give a
 command.
