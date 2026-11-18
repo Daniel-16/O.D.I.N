@@ -214,3 +214,11 @@ shipped `VoskWakeEngine` needs no training. If false triggers become annoying,
 a trained openWakeWord model for "hey odin" can be dropped in behind the same
 interface — roughly 3% of one core instead of 15–20%, at the cost of a one-time
 training session.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, and pull request guidelines.
+
+## License
+
+ODIN is licensed under the [MIT License](LICENSE).
