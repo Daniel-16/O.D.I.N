@@ -178,6 +178,44 @@ def cmd_check(args, cfg: Config) -> int:
     except Exception as exc:
         record("configured places", BAD, str(exc))
 
+    # --- vlc subtitle control ---
+    # A config check, not a liveness probe: VLC does not have to be running.
+    try:
+        from .actions import Context
+        from .actions.vlc import (VLCRC, status as vlc_status,
+                                  vlc_is_running, vlcrc_password)
+
+        if not VLCRC.exists():
+            record("VLC subtitles", WARN, f"no {VLCRC} yet - run VLC once")
+        else:
+            text = VLCRC.read_text(encoding="utf-8", errors="replace")
+            enabled = any(
+                line.startswith("extraintf=") and "http" in line
+                for line in text.splitlines()
+            )
+            password = cfg["vlc"]["password"] or vlcrc_password()
+            if not enabled or not password:
+                want = "extraintf=http" if not enabled else "http-password=<something>"
+                record("VLC subtitles", WARN,
+                       f"add {want} to {VLCRC}")
+            else:
+                where = f"{cfg['vlc']['host']}:{cfg['vlc']['port']}"
+                # If VLC is up, say whether it is actually reachable: a
+                # second VLC cannot bind the port and ends up with no
+                # control interface at all, which is otherwise baffling.
+                if not vlc_is_running():
+                    record("VLC subtitles", OK, f"{where} (VLC not running)")
+                else:
+                    try:
+                        vlc_status(Context(cfg=cfg))
+                        record("VLC subtitles", OK, f"{where}, VLC responding")
+                    except Exception:
+                        record("VLC subtitles", WARN,
+                               f"VLC is running but {where} does not answer"
+                               " - a second VLC, or restart VLC")
+    except Exception as exc:
+        record("VLC subtitles", WARN, str(exc))
+
     # --- brightness writability ---
     try:
         from .actions.system import _backlight, brightness_percent

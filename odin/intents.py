@@ -90,6 +90,14 @@ _BASE: tuple[Intent, ...] = (
            ("what is playing", "whats playing", "what song is this"),
            voice=ALWAYS),
 
+    # ---- vlc ------------------------------------------------------------
+    # Subtitles are VLC's own business: MPRIS has nothing for them, so this
+    # asks VLC to run the action its V key is bound to. See actions/vlc.py.
+    Intent("vlc.subtitle", "vlc.subtitle",
+           ("subtitle", "subtitles", "subtitle track", "next subtitle",
+            "change the subtitle", "toggle subtitles"),
+           reply="Subtitles."),
+
     # ---- volume ---------------------------------------------------------
     Intent("volume.up", "volume.up",
            ("volume up", "louder", "turn it up", "turn up the volume",

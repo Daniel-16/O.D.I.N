@@ -7,12 +7,13 @@ from __future__ import annotations
 import sys
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from odin.actions import ActionError, Context
-from odin.actions import media, meta, places, system, volume
+from odin.actions import media, meta, places, system, vlc, volume
 from odin.config import Config
 
 
@@ -248,6 +249,119 @@ class TestBattery(unittest.TestCase):
             system._BATTERY_ROOT = Path(tmp)
             with self.assertRaises(ActionError):
                 system.battery(ctx(), {})
+
+
+class TestVLCSubtitles(unittest.TestCase):
+    """The HTTP boundary is stubbed: no VLC and no socket needed."""
+
+    def setUp(self):
+        self._real_open = vlc._opener.open
+        self._real_cache = vlc._cached
+        self._real_running = vlc.vlc_is_running
+        self.requests: list[str] = []
+
+    def tearDown(self):
+        vlc._opener.open = self._real_open
+        vlc._cached = self._real_cache
+        vlc.vlc_is_running = self._real_running
+
+    def stub_open(self, result):
+        """Capture the URL asked for; `result` is raised if it is an error."""
+
+        class _Response:
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, *exc):
+                return False
+
+            def read(self_inner):
+                return b"<root/>"
+
+        def opened(request, timeout=None):
+            self.requests.append(request.full_url)
+            if isinstance(result, Exception):
+                raise result
+            return _Response()
+
+        vlc._opener.open = opened
+
+    def stub_process(self, running: bool):
+        vlc.vlc_is_running = lambda: running
+
+    def vlc_ctx(self, password="secret"):
+        c = ctx()
+        c.cfg["vlc"]["password"] = password
+        return c
+
+    def test_subtitle_presses_vlcs_own_v_key(self):
+        self.stub_open(None)
+        self.assertIsNone(vlc.subtitle(self.vlc_ctx(), {}))
+        self.assertEqual(len(self.requests), 1)
+        url = self.requests[0]
+        self.assertIn("127.0.0.1:8080/requests/status.xml", url)
+        self.assertIn("command=key", url)
+        # No "key-" prefix: VLC's HTTP interface adds that itself, and the
+        # prefixed spelling is answered with 200 and silently ignored.
+        self.assertIn("val=subtitle-track", url)
+        self.assertNotIn("val=key-subtitle-track", url)
+
+    def test_vlc_not_running_is_said_plainly(self):
+        self.stub_open(ConnectionRefusedError(111, "refused"))
+        self.stub_process(False)
+        with self.assertRaises(ActionError) as caught:
+            vlc.subtitle(self.vlc_ctx(), {})
+        self.assertEqual(str(caught.exception), vlc.NOT_RUNNING)
+
+    def test_running_vlc_without_an_interface_says_so(self):
+        """A second VLC cannot bind the port and has no control interface:
+        saying "VLC is not running" there would send the user hunting for
+        the wrong problem."""
+        self.stub_open(ConnectionRefusedError(111, "refused"))
+        self.stub_process(True)
+        with self.assertRaises(ActionError) as caught:
+            vlc.subtitle(self.vlc_ctx(), {})
+        self.assertEqual(str(caught.exception), vlc.NO_INTERFACE)
+
+    def test_rejected_password_is_distinguished(self):
+        error = urllib.error.HTTPError(
+            "http://127.0.0.1:8080/", 401, "Unauthorized", {}, None)
+        self.stub_open(error)
+        with self.assertRaises(ActionError) as caught:
+            vlc.subtitle(self.vlc_ctx(), {})
+        self.assertEqual(str(caught.exception), vlc.BAD_PASSWORD)
+
+    def test_no_password_anywhere_is_not_a_failed_request(self):
+        self.stub_open(None)
+        vlc._cached = None
+        with tempfile.TemporaryDirectory() as tmp:
+            real_vlcrc, vlc.VLCRC = vlc.VLCRC, Path(tmp) / "vlcrc"
+            try:
+                with self.assertRaises(ActionError) as caught:
+                    vlc.subtitle(self.vlc_ctx(password=""), {})
+            finally:
+                vlc.VLCRC = real_vlcrc
+        self.assertEqual(str(caught.exception), vlc.NO_PASSWORD)
+        self.assertEqual(self.requests, [])
+
+    def test_password_comes_from_vlcrc_when_config_is_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rc = Path(tmp) / "vlcrc"
+            rc.write_text("#http-port=8080\nhttp-password=fromvlcrc\n")
+            vlc._cached = None
+            self.assertEqual(vlc.vlcrc_password(rc), "fromvlcrc")
+
+    def test_config_password_wins_over_vlcrc(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rc = Path(tmp) / "vlcrc"
+            rc.write_text("http-password=fromvlcrc\n")
+            real_vlcrc, vlc.VLCRC = vlc.VLCRC, rc
+            vlc._cached = None
+            try:
+                self.assertEqual(vlc._password(self.vlc_ctx("explicit")),
+                                 "explicit")
+            finally:
+                vlc.VLCRC = real_vlcrc
 
 
 if __name__ == "__main__":

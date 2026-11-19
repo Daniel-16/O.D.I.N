@@ -17,7 +17,7 @@ from typing import Any, Callable
 
 log = logging.getLogger("odin.actions")
 
-_MODULES = ("media", "volume", "apps", "places", "system", "meta")
+_MODULES = ("media", "volume", "apps", "places", "system", "meta", "vlc")
 
 
 class ActionError(RuntimeError):

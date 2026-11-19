@@ -40,6 +40,7 @@ _DEFAULTS: dict[str, Any] = {
         "volume": 0.5,
     },
     "media": {"players": "spotify,vlc,chromium,firefox,%any"},
+    "vlc": {"host": "127.0.0.1", "port": 8080, "password": ""},
     "volume": {"step": 5, "limit": 1.0},
     "brightness": {"step": 10},
     "system": {"screenshot_dir": "~/Pictures", "confirm_destructive": True},

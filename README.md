@@ -50,6 +50,7 @@ systemctl --user stop odin
 | Area | Say |
 |---|---|
 | Media | play · pause · next track · previous track · stop · play music · pause music |
+| Subtitles | subtitle · subtitles · next subtitle  *(cycles VLC's subtitle track; see below)* |
 | Volume | volume up · volume down · louder · quieter · mute · sound on · max volume · set volume to sixty percent · half volume |
 | Apps | open firefox / chrome / spotify / telegram / terminal / files / settings / calculator / code / media player / whats app web / youtube music / … (also "launch …" or "start …") |
 | Folders | open series · open movies · open videos · open downloads · open documents · open pictures · open screenshots · open music folder · open home folder · open trash |
@@ -59,6 +60,34 @@ systemctl --user stop odin
 | Correcting | undo that · never mind |
 | Power | shut down · reboot  *(both ask "Are you sure?" and need a spoken "yes")* |
 | ODIN | stop listening · start listening · are you there |
+
+### Subtitles in VLC
+
+Saying *"subtitle"* cycles VLC's subtitle track, exactly as pressing **V** in
+VLC does — including cycling round to "off". Wayland forbids synthetic
+keypresses, so ODIN does not press the key: it asks VLC to run the action that
+key is bound to, over VLC's own HTTP control interface on loopback. Nothing
+leaves the machine.
+
+That interface has to be switched on once, in `~/.config/vlc/vlcrc`:
+
+```ini
+extraintf=http
+http-host=127.0.0.1
+http-port=8080
+http-password=<something>
+```
+
+Only one VLC can hold the port: if a second VLC is opened while the first is
+still playing, the second starts with no control interface at all, and
+*"subtitle"* answers *"VLC's web interface is not responding."* Close the
+spare VLC window and the next one to start gets the port. `./odin.sh check`
+says which of the two situations you are in.
+
+`./odin.sh check` reports whether that is in place, and ODIN picks the password
+up from `vlcrc` on its own — set `[vlc] password` in `config.toml` only if you
+want to override it. ODIN never writes to `vlcrc` itself. With VLC closed, the
+command simply answers *"VLC is not running."*
 
 `./odin.sh phrases` prints the authoritative list. To add an app, add a line to
 `[apps]` in `config.toml` and run `./odin.sh check` — it will tell you if the
@@ -134,6 +163,7 @@ route that actually works:
 | Action | Route | Why not the obvious one |
 |---|---|---|
 | play / pause | MPRIS via `playerctl` | Wayland does not allow synthesising media keys |
+| subtitle | VLC's HTTP interface, hotkey `key-subtitle-track` | MPRIS has no subtitle control, and no synthetic `V` key reaches a Wayland window |
 | volume | `wpctl` (WirePlumber) | PipeWire owns the sink, not ALSA |
 | open app | `gtk-launch` in a transient systemd scope | starts the app as a click would, *outside* ODIN's control group (see below) |
 | lock | `org.gnome.ScreenSaver` | `loginctl` needs a session the daemon does not have |

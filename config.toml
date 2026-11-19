@@ -50,6 +50,20 @@ volume = 0.5             # 0..1 scaling for ODIN's own voice and beeps
 # Tried in order; "%any" falls back to whatever is on the MPRIS bus.
 players = "spotify,vlc,chromium,firefox,%any"
 
+[vlc]
+# "subtitle" cycles VLC's subtitle track the way pressing V does. Wayland
+# forbids synthetic keypresses, so ODIN asks VLC to run the hotkey itself over
+# VLC's HTTP control interface - loopback only, nothing leaves the machine.
+# Enable it once in ~/.config/vlc/vlcrc:
+#   extraintf=http
+#   http-host=127.0.0.1
+#   http-port=8080
+#   http-password=<something>
+# `./odin.sh check` tells you whether that is in place.
+host = "127.0.0.1"
+port = 8080
+password = ""            # empty = read http-password from ~/.config/vlc/vlcrc
+
 [volume]
 step = 5                 # percent per "volume up"
 limit = 1.0              # never exceed 100% (prevents clipping/damage)
