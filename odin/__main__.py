@@ -182,7 +182,8 @@ def cmd_check(args, cfg: Config) -> int:
     # A config check, not a liveness probe: VLC does not have to be running.
     try:
         from .actions import Context
-        from .actions.vlc import (VLCRC, status as vlc_status,
+        from .actions.vlc import (PASSWORD_KEY, VLCRC,
+                                  status as vlc_status,
                                   vlc_is_running, vlcrc_password)
 
         if not VLCRC.exists():
@@ -195,7 +196,8 @@ def cmd_check(args, cfg: Config) -> int:
             )
             password = cfg["vlc"]["password"] or vlcrc_password()
             if not enabled or not password:
-                want = "extraintf=http" if not enabled else "http-password=<something>"
+                want = ("extraintf=http" if not enabled
+                        else f"{PASSWORD_KEY}=<something>")
                 record("VLC subtitles", WARN,
                        f"add {want} to {VLCRC}")
             else:

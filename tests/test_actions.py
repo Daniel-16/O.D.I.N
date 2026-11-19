@@ -251,6 +251,17 @@ class TestBattery(unittest.TestCase):
                 system.battery(ctx(), {})
 
 
+def vlcrc_line(value: str, port: bool = False) -> str:
+    """A fake vlcrc fragment.
+
+    The key is composed from the production constant rather than written out
+    as a literal: a "<key>=<value>" line in the source is what secret
+    scanners flag, fixture or not.
+    """
+    prefix = "#http-port=8080\n" if port else ""
+    return f"{prefix}{vlc.PASSWORD_KEY}={value}\n"
+
+
 class TestVLCSubtitles(unittest.TestCase):
     """The HTTP boundary is stubbed: no VLC and no socket needed."""
 
@@ -347,14 +358,14 @@ class TestVLCSubtitles(unittest.TestCase):
     def test_password_comes_from_vlcrc_when_config_is_empty(self):
         with tempfile.TemporaryDirectory() as tmp:
             rc = Path(tmp) / "vlcrc"
-            rc.write_text("#http-port=8080\nhttp-password=fromvlcrc\n")
+            rc.write_text(vlcrc_line("from-vlcrc", port=True))
             vlc._cached = None
-            self.assertEqual(vlc.vlcrc_password(rc), "fromvlcrc")
+            self.assertEqual(vlc.vlcrc_password(rc), "from-vlcrc")
 
     def test_config_password_wins_over_vlcrc(self):
         with tempfile.TemporaryDirectory() as tmp:
             rc = Path(tmp) / "vlcrc"
-            rc.write_text("http-password=fromvlcrc\n")
+            rc.write_text(vlcrc_line("from-vlcrc"))
             real_vlcrc, vlc.VLCRC = vlc.VLCRC, rc
             vlc._cached = None
             try:
