@@ -9,6 +9,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import threading
+import time
 from typing import Iterator
 
 import numpy as np
@@ -52,6 +53,9 @@ class Speaker:
         self._lock = threading.Lock()
         self._gain = float(self._cfg.get("volume", 0.5))
         self.last_said: str | None = None  # for "say that again"
+        # When that reply finished playing. The daemon uses it to recognise
+        # its own words coming back through the microphone.
+        self.last_said_at: float = 0.0
         self._cache: dict[str, np.ndarray] = {}
         if self._cfg.get("enabled", True) and self._cfg.get("preload", True):
             self.warm()
@@ -125,3 +129,4 @@ class Speaker:
         )
         log.debug("speaking: %s", text)
         self._play(audio, rate)
+        self.last_said_at = time.monotonic()

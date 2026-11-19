@@ -324,6 +324,92 @@ class TestFollowUp(DaemonTestCase):
         self.assertEqual(len(self.calls), 1)
 
 
+class TestFollowUpIsStrict(DaemonTestCase):
+    """What arrives in a follow-up window may be the room, not a command.
+
+    All three cases below were observed live with a film playing: ODIN
+    skipped tracks on its own, repeated a command it had just carried out,
+    and talked itself round a clarification loop.
+    """
+
+    def nbest(self, *texts):
+        return ListenResult(texts[0], HEARD, tuple(texts))
+
+    def test_follow_up_ignores_all_but_the_top_hypothesis(self):
+        # "files" is not a command; "pause" further down the N-best list is.
+        # Right after the wake word that rescue is wanted - here it is noise.
+        self.set_cfg(listen={"follow_up_s": 4.0})
+        self.script(heard("volume up"), self.nbest("files", "pause"))
+        self.odin._handle_wake()
+        self.assertEqual([c[0] for c in self.calls], ["volume.up"])
+
+    def test_first_turn_still_uses_the_nbest_rescue(self):
+        self.set_cfg(listen={"follow_up_s": 4.0})
+        self.script(self.nbest("files", "pause"), ListenResult("", NO_SPEECH))
+        self.odin._handle_wake()
+        self.assertEqual([c[0] for c in self.calls], ["media.pause"])
+
+    def test_noise_closes_the_follow_up_window(self):
+        # Without this the room gets another four chances to say something
+        # that happens to be a command.
+        self.set_cfg(listen={"follow_up_s": 4.0, "max_turns": 5})
+        self.script(heard("volume up"), heard("the weather"), heard("pause"))
+        self.odin._handle_wake()
+        self.assertEqual([c[0] for c in self.calls], ["volume.up"])
+
+    def test_noise_in_a_follow_up_is_not_announced(self):
+        self.set_cfg(listen={"follow_up_s": 4.0})
+        self.script(heard("volume up"), heard("the weather"))
+        self.odin._handle_wake()
+        self.assertEqual(self.odin.speaker.said, [])
+
+    def test_strictness_can_be_switched_off(self):
+        self.set_cfg(listen={"follow_up_s": 4.0, "follow_up_strict": False})
+        self.script(heard("volume up"), self.nbest("files", "pause"),
+                    ListenResult("", NO_SPEECH))
+        self.odin._handle_wake()
+        self.assertEqual([c[0] for c in self.calls], ["volume.up", "media.pause"])
+
+
+class TestOwnVoiceEcho(DaemonTestCase):
+    """ODIN's own reply, heard back through the microphone.
+
+    Live, "next" was answered with "Next." and the follow-up window heard
+    that word back, skipping a second track.
+    """
+
+    def speak_then_hear(self, reply, heard_text, **listen_cfg):
+        self.set_cfg(listen={"follow_up_s": 4.0, **listen_cfg})
+        self.odin.speaker.last_said = reply
+        self.odin.speaker.last_said_at = __import__("time").monotonic()
+        self.script(heard("next track"), heard(heard_text),
+                    ListenResult("", NO_SPEECH))
+        self.odin._handle_wake()
+        return [c[0] for c in self.calls]
+
+    def test_own_reply_heard_back_is_ignored(self):
+        self.assertEqual(self.speak_then_hear("Next.", "next"), ["media.next_track"])
+
+    def test_echo_does_not_close_the_window(self):
+        # A genuine command after the echo must still be heard.
+        self.set_cfg(listen={"follow_up_s": 4.0})
+        self.odin.speaker.last_said = "Next."
+        self.odin.speaker.last_said_at = __import__("time").monotonic()
+        self.script(heard("next track"), heard("next"), heard("pause"),
+                    ListenResult("", NO_SPEECH))
+        self.odin._handle_wake()
+        self.assertEqual([c[0] for c in self.calls], ["media.next_track", "media.pause"])
+
+    def test_a_stale_reply_is_not_treated_as_an_echo(self):
+        self.assertEqual(
+            self.speak_then_hear("Next.", "next", echo_guard_s=0.0),
+            ["media.next_track", "media.next_track"])
+
+    def test_words_odin_did_not_say_are_still_commands(self):
+        self.assertEqual(self.speak_then_hear("Next.", "pause"),
+                         ["media.next_track", "media.pause"])
+
+
 class TestReWake(DaemonTestCase):
     """The wake word must never be mistaken for a command.
 

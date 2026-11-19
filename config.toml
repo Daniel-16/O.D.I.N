@@ -15,6 +15,15 @@ phrases = ["hey odin", "hi odin"]
 allow_bare_name = false  # true also wakes on a bare "odin" (expect false triggers)
 on_partial = true        # fire mid-utterance; much snappier
 refractory_s = 1.5       # ignore re-triggers for this long after waking
+# Telling you apart from your own speakers. A film or a call playing nearby
+# will eventually decode as "hey odin" through the closed wake grammar, so a
+# detection must also be louder than whatever is already playing: above
+# `min_level` outright, and `speak_up_margin` times the background ODIN has
+# settled on. Set min_level with `./odin.sh mic-test`: above your quiet room,
+# well below your voice. On this machine the room reads ~570, a film ~920
+# (peaks ~2000) and a spoken phrase ~5700 (peaks ~15800).
+min_level = 800          # 0 disables the check entirely
+speak_up_margin = 2.0    # how much louder than the background you must be
 settle_ms = 300          # drop this much audio after waking (the wake-word tail)
 # Words the wake recogniser may hear instead of the wake word. ODIN ships a
 # list of common words for this; anything here is added to it. Without them a
@@ -26,13 +35,26 @@ extra_decoys = []
 max_s = 6.0              # hard cap on one command
 silence_end_s = 0.8      # end the command after this much trailing silence
 no_speech_timeout_s = 3.0  # give up if nothing is said after the beep
-energy_threshold = 300   # RMS (int16) above which a block counts as speech
+# RMS (int16) above which a block counts as speech. This must sit above your
+# room's noise floor: at 300 it was below it, so a playing film counted as
+# speech and its dialogue was decoded as commands. `./odin.sh mic-test` shows
+# your levels.
+energy_threshold = 800
 alternatives = 5         # N-best hypotheses to consider (see odin/listen.py)
 follow_up_s = 4.0        # keep listening this long after acting (0 disables)
 # Nobody has addressed ODIN during a follow-up window, so room noise gets a
 # chance to be decoded. Speech must be this many times louder to count there.
 follow_up_threshold_scale = 2.0
 max_turns = 5            # most commands accepted from one wake word
+# A follow-up window is open without anyone having addressed ODIN, so it is
+# held to a stricter standard: only the best hypothesis may match (no N-best
+# rescue), there is no "did you mean ...?", and anything that is not a command
+# closes the window instead of giving the room four more chances.
+follow_up_strict = true
+# Ignore ODIN's own words heard back through the microphone this soon after it
+# speaks. Without it, "next" was answered with "Next.", which was heard as
+# "next" and skipped a second track.
+echo_guard_s = 2.0
 clarify = true           # ask "did you mean ...?" on a near miss
 clarify_cutoff = 0.62    # similarity needed to offer a suggestion (0..1)
 

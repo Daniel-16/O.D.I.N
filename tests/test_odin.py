@@ -203,6 +203,92 @@ class TestWakeMatching(unittest.TestCase):
             self.assertIsNone(self.engine._hit(text), text)
 
 
+class TestWakeLevelGate(unittest.TestCase):
+    """A wake word must be louder than whatever is already playing.
+
+    With a closed grammar, continuous sound from the speakers - a film, a
+    call, music - sooner or later decodes as the wake phrase; that is how
+    ODIN was waking itself while a video played. The gate is level rather
+    than silence, because ODIN has to stay usable *during* a film.
+    """
+
+    RATE = 16000
+
+    def engine(self, min_level=350.0, margin=2.0):
+        eng = object.__new__(VoskWakeEngine)
+        eng._phrases = ["hey odin", "hi odin"]
+        eng._sample_rate = self.RATE
+        eng._min_level = min_level
+        eng._speak_up_margin = margin
+        eng._background = None
+        eng._recent = []
+        eng._peak_blocks = 7
+        eng._refractory_s = 0.0
+        eng._last_fire = 0.0
+        eng.reset = lambda: eng._recent.clear()
+        return eng
+
+    def block(self, level, seconds=0.125):
+        """A PCM block at roughly the given RMS level."""
+        import numpy as np
+        return np.full(int(self.RATE * seconds), int(level),
+                       dtype=np.int16).tobytes()
+
+    def feed(self, eng, level, seconds):
+        for _ in range(max(1, int(seconds / 0.125))):
+            eng._track_level(self.block(level))
+
+    def test_a_raised_voice_in_a_quiet_room_wakes(self):
+        eng = self.engine()
+        self.feed(eng, 20, 3.0)        # quiet room
+        self.feed(eng, 3000, 0.5)      # someone speaks
+        self.assertIsNotNone(eng._evaluate("hey odin", partial=True))
+
+    def test_a_film_at_its_own_level_does_not_wake(self):
+        eng = self.engine()
+        self.feed(eng, 1500, 20.0)     # a film, long enough to be background
+        self.assertIsNone(eng._evaluate("hey odin", partial=True))
+
+    def test_speaking_over_a_film_still_wakes(self):
+        # The case that matters: "hey odin, subtitle" during a film.
+        eng = self.engine()
+        self.feed(eng, 1500, 20.0)     # film becomes the background
+        self.feed(eng, 5000, 0.5)      # and someone talks over it
+        self.assertIsNotNone(eng._evaluate("hey odin", partial=True))
+
+    def test_a_whisper_in_a_silent_room_does_not_wake(self):
+        # The margin alone would pass this; the absolute floor is what stops
+        # a faint sound two rooms away.
+        eng = self.engine()
+        self.feed(eng, 2, 3.0)
+        self.feed(eng, 100, 0.5)
+        self.assertIsNone(eng._evaluate("hey odin", partial=True))
+
+    def test_a_few_words_do_not_become_the_background(self):
+        # Background rises slowly on purpose: two commands in a row must not
+        # raise the bar for the third.
+        eng = self.engine()
+        self.feed(eng, 20, 3.0)
+        for _ in range(3):
+            self.feed(eng, 3000, 0.6)
+            self.feed(eng, 20, 0.6)
+        self.feed(eng, 3000, 0.5)
+        self.assertIsNotNone(eng._evaluate("hey odin", partial=True))
+
+    def test_the_gate_can_be_switched_off(self):
+        eng = self.engine(min_level=0.0)
+        self.feed(eng, 1500, 20.0)
+        self.assertIsNotNone(eng._evaluate("hey odin", partial=True))
+
+    def test_background_survives_a_reset(self):
+        eng = self.engine()
+        self.feed(eng, 1500, 20.0)
+        background = eng._background
+        eng.reset()
+        self.assertEqual(eng._background, background)
+        self.assertEqual(eng._recent, [])
+
+
 class TestListenCleaning(unittest.TestCase):
     def test_unk_tokens_are_dropped(self):
         self.assertEqual(_clean("volume [unk] up"), "volume up")

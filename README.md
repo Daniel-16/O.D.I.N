@@ -206,8 +206,16 @@ Run `systemctl --user restart odin` after editing.
    phrase that is consistently misheard can be reworded in `config.toml` (for
    apps) or `odin/intents.py` (for everything else).
 
-Two knobs matter most: `energy_threshold` for your room, and
-`wake.allow_bare_name` for how eager ODIN is.
+Three knobs matter most: `listen.energy_threshold` and `wake.min_level` for
+your room, and `wake.allow_bare_name` for how eager ODIN is.
+
+**Set the two level knobs from measurements, not by feel.** Both must sit
+above your room's noise floor, or ODIN treats the room as speech. On the
+machine this was developed on, `mic-test` reads about 570 in a quiet room,
+920 with a film playing (peaks near 2000) and 5700 for a spoken phrase (peaks
+near 15800) — hence the shipped 800. If `energy_threshold` is below your
+floor, ODIN decodes whatever is playing into commands; if it is far above
+your voice, nothing is heard at all.
 
 ## Tests
 
@@ -275,12 +283,26 @@ systemctl --user status odin        # should list only the python process
 * **Range is about 1–2 m** on the internal microphone in a quiet room. The
   biggest enemy of wake-word accuracy is music playing through the laptop's own
   speakers. ODIN mutes its own microphone while it speaks, but it cannot do
-  that for your music.
+  that for your music, so it instead requires you to be **louder than whatever
+  is playing**: a detection must clear `wake.min_level` and be
+  `wake.speak_up_margin` times the background level ODIN has settled on. A
+  film becomes the background and stops waking it; you talking over the film
+  still does. The cost is that ODIN cannot be woken by a whisper while
+  something loud is playing. Set `wake.min_level = 0` to switch the check off.
 * **Brightness needs the udev rule** from `scripts/setup-system.sh`. Without
   it, ODIN says so instead of failing silently.
 * **You cannot speak over ODIN's reply.** Its microphone is muted while it
   talks, so a command said during a spoken reply is lost. Set
   `speech.verbosity = "brief"` if you want shorter gaps between commands.
+* **A follow-up window is held to a stricter standard.** Only its best
+  hypothesis may match a command, it never asks "did you mean ...?", and
+  anything that is not a command closes the window. Before that, a film's
+  dialogue reached it as "files" (-> pause), "viewer" (-> dimmer) and "set"
+  (-> silence), and ODIN skipped tracks on its own. Set
+  `listen.follow_up_strict = false` to go back to the old behaviour.
+* **ODIN recognises its own voice coming back.** Saying "next" was answered
+  with "Next.", which the open follow-up window heard and acted on, skipping
+  twice. Words it has just spoken are ignored for `listen.echo_guard_s`.
 * **A follow-up window asks for a clearer voice.** Nobody has addressed ODIN
   during one, so room noise gets a chance to be decoded — live testing had
   noise come back as "louder" and change the volume. Speech must now be about

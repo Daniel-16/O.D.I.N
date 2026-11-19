@@ -7,6 +7,7 @@ import json
 import logging
 import signal
 import threading
+import time
 
 from . import intents as intent_mod
 from .actions import ActionError, Context, dispatch
@@ -81,6 +82,8 @@ class Odin:
             sample_rate=cfg["audio"]["sample_rate"],
             on_partial=cfg["wake"]["on_partial"],
             refractory_s=cfg["wake"]["refractory_s"],
+            min_level=cfg["wake"]["min_level"],
+            speak_up_margin=cfg["wake"]["speak_up_margin"],
         )
         self.listener = CommandListener(
             self.model, cfg, sample_rate=cfg["audio"]["sample_rate"]
@@ -185,9 +188,30 @@ class Odin:
             log.info("ignoring wake-word fragment %r", candidates[0])
             return True
 
-        match = self.table.match_any(candidates)
+        # ODIN's own reply coming back through the microphone. It happens
+        # when something else is playing through the speakers, which is
+        # exactly when a follow-up window is most exposed: after "next" ODIN
+        # says "Next.", heard that back, and skipped the track a second time.
+        if not first and self._is_own_echo(candidates[0]):
+            log.info("ignoring own words heard back: %r", candidates[0])
+            return True
+
+        # Nobody addressed ODIN in a follow-up window, so whatever arrived is
+        # as likely to be the room as a command. The N-best rescue - keeping
+        # the best hypothesis that happens to be a command - is right after
+        # the wake word and reckless here: live, it turned "files" into
+        # "pause", "viewer" into "dimmer" and "set" into "silence".
+        strict = not first and bool(self.cfg["listen"]["follow_up_strict"])
+        match = self.table.match_any(
+            candidates[:1] if strict else candidates)
         if match is None:
-            log.info("no intent matched %r", result.text)
+            log.info("no intent matched %r%s", result.text,
+                     " (follow-up, top hypothesis only)" if strict else "")
+            if strict:
+                # Not a command: stop listening rather than give the room
+                # four more chances to say something that is.
+                log.info("closing the follow-up window")
+                return False
             return self._unmatched(result)
 
         if self.ctx.standby and match.intent.handler != "meta.resume":
@@ -201,6 +225,27 @@ class Odin:
 
         self._execute(match)
         return True
+
+    def _is_own_echo(self, text: str) -> bool:
+        """True if `text` is nothing but words ODIN itself just said.
+
+        Deliberately narrow: it only fires within `echo_guard_s` of a reply,
+        and only when every word heard appears in that reply, so a person
+        genuinely repeating a command is not swallowed.
+        """
+        guard = float(self.cfg["listen"]["echo_guard_s"])
+        said = getattr(self.speaker, "last_said", None)
+        said_at = float(getattr(self.speaker, "last_said_at", 0.0) or 0.0)
+        if guard <= 0 or not said or not said_at:
+            return False
+        if time.monotonic() - said_at > guard:
+            return False
+        spoken = {
+            word.strip(".,:;!?").lower()
+            for word in said.split()
+        }
+        words = text.split()
+        return bool(words) and all(word in spoken for word in words)
 
     def _is_wake_fragment(self, text: str) -> bool:
         """True if the text is made only of wake-word words."""
